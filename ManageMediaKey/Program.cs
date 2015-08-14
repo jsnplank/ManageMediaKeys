@@ -18,19 +18,21 @@ namespace ManageMediaKey
 
         private const int SwMinimize = 6;
 
+        private const uint WaitTimeout = 0x00000102;
+
         private static readonly LowLevelKeyboardProc Proc = HookCallback;
 
         private static IntPtr _hookId = IntPtr.Zero;
 
-        private static IntPtr _miroHandle;
+        private static IntPtr _miroHandle = IntPtr.Zero;
+
+        private static IntPtr _processHandle = IntPtr.Zero;
 
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
         /// <summary>The main.</summary>
         public static void Main()
         {
-            _miroHandle = GetMiroHandle();
-
             _hookId = SetHook(Proc);
             Application.Run();
             UnhookWindowsHookEx(_hookId);
@@ -38,8 +40,23 @@ namespace ManageMediaKey
 
         private static IntPtr GetMiroHandle()
         {
-            var wmiQueryString = "SELECT ProcessId, ExecutablePath, Name FROM Win32_Process WHERE Name = 'Miro.exe'";
-            using (var searcher = new ManagementObjectSearcher(wmiQueryString))
+            if (_processHandle != IntPtr.Zero)
+            {
+                if (WaitForSingleObject(_processHandle, 0) == WaitTimeout)
+                {  
+                    return _miroHandle; 
+                }
+
+                CloseHandle(_processHandle);
+            }
+
+            // reset
+            _miroHandle = IntPtr.Zero;
+            _processHandle = IntPtr.Zero;
+
+            const string WmiQueryString = "SELECT ProcessId, ExecutablePath, Name FROM Win32_Process WHERE Name = 'Miro.exe'";
+
+            using (var searcher = new ManagementObjectSearcher(WmiQueryString))
             using (var results = searcher.Get())
             {
                 var query = from p in Process.GetProcesses()
@@ -50,14 +67,19 @@ namespace ManageMediaKey
                                            Process = p,
                                        };
 
-                var miroProcessId = IntPtr.Zero;
-                foreach (var item in query)
+                var processItem = query.FirstOrDefault();
+                if (processItem != null)
                 {
-                    miroProcessId = item.Process.MainWindowHandle;
+                    var process = processItem.Process;
+                    if (process != null)
+                    {
+                        _miroHandle = process.MainWindowHandle;
+                        _processHandle = OpenProcess(ProcessAccessFlags.Synchronize, false, process.Id);
+                    }
                 }
-
-                return miroProcessId;
             }
+
+            return _miroHandle;
         }
 
         private static IntPtr SetHook(LowLevelKeyboardProc proc)
@@ -76,22 +98,27 @@ namespace ManageMediaKey
                 var vkCode = (Keys)Marshal.ReadInt32(lParam);
 
                 // switch to miro and "press" the space bar
-                if (vkCode == Keys.MediaPlayPause && _miroHandle != IntPtr.Zero)
+                if (vkCode == Keys.MediaPlayPause)
                 {
-                    var currentHandle = GetCurrentAppHandle();
-
                     // set to miro and maximize
-                    SetForegroundWindow(_miroHandle);
-                    ShowWindow(_miroHandle, SwMaximize);
+                    var handle = GetMiroHandle();
 
-                    // send a space bar
-                    SendKeys.Send(" ");
+                    if (handle != IntPtr.Zero)
+                    {
+                        var currentHandle = GetCurrentAppHandle();
 
-                    // minimize miro
-                    ShowWindow(_miroHandle, SwMinimize);
+                        SetForegroundWindow(handle);
+                        ShowWindow(_miroHandle, SwMaximize);
 
-                    // switch back to the application that initially had focus
-                    SetForegroundWindow(currentHandle);
+                        // send a space bar
+                        SendKeys.Send(" ");
+
+                        // minimize miro
+                        ShowWindow(_miroHandle, SwMinimize);
+
+                        // switch back to the application that initially had focus
+                        SetForegroundWindow(currentHandle);                        
+                    }
                 }
             }
 
@@ -131,5 +158,33 @@ namespace ManageMediaKey
 
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr OpenProcess(ProcessAccessFlags processAccess, bool bInheritHandle, int processId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        [Flags]
+        public enum ProcessAccessFlags : uint
+        {
+            All = 0x001F0FFF,
+            Terminate = 0x00000001,
+            CreateThread = 0x00000002,
+            VirtualMemoryOperation = 0x00000008,
+            VirtualMemoryRead = 0x00000010,
+            VirtualMemoryWrite = 0x00000020,
+            DuplicateHandle = 0x00000040,
+            CreateProcess = 0x000000080,
+            SetQuota = 0x00000100,
+            SetInformation = 0x00000200,
+            QueryInformation = 0x00000400,
+            QueryLimitedInformation = 0x00001000,
+            Synchronize = 0x00100000
+        }
     }
 }
