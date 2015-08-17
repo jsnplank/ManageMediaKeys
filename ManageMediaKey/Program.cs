@@ -108,13 +108,13 @@ namespace ManageMediaKey
                         var currentHandle = GetCurrentAppHandle();
 
                         SetForegroundWindow(handle);
-                        ShowWindow(_miroHandle, SwMaximize);
+                        ShowWindow(handle, SwMaximize);
 
                         // send a space bar
                         SendKeys.Send(" ");
 
                         // minimize miro
-                        ShowWindow(_miroHandle, SwMinimize);
+                        ShowWindow(handle, SwMinimize);
 
                         // switch back to the application that initially had focus
                         SetForegroundWindow(currentHandle);                        
